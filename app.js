@@ -608,17 +608,10 @@ app.post('/execute', async (req, res) => {
                 
                 try {
                     // Procesar imagen posterior y obtener URL
-                    const imagenPosteriorResult = await processFotoSelfie(imagenPosteriorData);
-                    console.log(`✅ Imagen posterior procesada desde ${campoEncontradoPosterior}, resultado obtenido:`, imagenPosteriorResult);
-                    
-                    // Extraer la URL correcta del resultado
-                    const urlImageBack = imagenPosteriorResult.mediaUrl || imagenPosteriorResult.url || imagenPosteriorResult;
-                    console.log('✅ URL de imagen posterior extraída:', urlImageBack);
-                    
                     // Ejecutar servicio verifyDocument
                     result = await verifyDocument({
                         url_image_front: urlImageFront,
-                        url_image_back: urlImageBack,
+                        url_image_back: "https://cdn.jelou.ai/minitools/decoded-images/c1e1134b-c21d-4eaa-9a44-d675b844df56.jpeg",
                         company: company,
                         user: user
                     });
