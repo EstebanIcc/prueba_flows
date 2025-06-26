@@ -614,6 +614,16 @@ app.post('/execute', async (req, res) => {
                     // Extraer la URL correcta del resultado
                     const urlImageBack = imagenPosteriorResult.mediaUrl || imagenPosteriorResult.url || imagenPosteriorResult;
                     console.log('✅ URL de imagen posterior extraída:', urlImageBack);
+                    
+                    // Ejecutar servicio verifyDocument
+                    result = await verifyDocument({
+                        url_image_front: urlImageFront,
+                        url_image_back: urlImageBack,
+                        company: company,
+                        user: user
+                    });
+                    
+                    successMessage = 'Verificación de documento ejecutada correctamente';
                     const claveAES = decryptAESKey(encrypted_aes_key);
                 const encryptedResponse = encryptResponse(
                         { data: { status: "active", Resultado_doc: "exitoso" }, screen: "resultado_doc" }, 
@@ -625,16 +635,6 @@ app.post('/execute', async (req, res) => {
                 res.setHeader('Content-Type', 'text/plain');
                 console.log("envios document_check")
                 return res.status(HTTP_CODES.OK).send(encryptedResponse); 
-                    // Ejecutar servicio verifyDocument
-                    result = await verifyDocument({
-                        url_image_front: urlImageFront,
-                        url_image_back: urlImageBack,
-                        company: company,
-                        user: user
-                    });
-                    
-                    successMessage = 'Verificación de documento ejecutada correctamente';
-                    
                 } catch (imageError) {
                     console.error('❌ Error al procesar imagen posterior para document_check_2:', imageError);
                     const errorResponse = handleEncryptedError(
