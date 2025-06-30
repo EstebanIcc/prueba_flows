@@ -1,0 +1,30 @@
+app: biometric_flows_lambda
+#org:  01lab
+service: biometric_flows_lambda
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  timeout: 60 # Function attached to API Gateway are limited to 30 seconds
+  endpointType: REGIONAL
+  environment:
+    TIMEZONE: America/Guayaquil
+
+functions:
+  app:
+    handler: app.handler
+    events:
+        - http: ANY /
+        - http: 'ANY /{proxy+}'
+
+plugins:
+  - serverless-domain-manager
+  - serverless-offline
+
+custom:
+  customDomain:
+    domainName: functions.jelou.ai
+    stage: dev
+    basePath: biometric_flows_lambda
+    certificateName: 'functions.jelou.ai'
+    securityPolicy: tls_1_2 
