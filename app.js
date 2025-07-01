@@ -1,6 +1,6 @@
 const serverless = require('serverless-http');
 const express = require('express');
-const { validateLiveness, getBotMemoryRecords, verifyDocument, verifyDocumentAdvanced, compareImages, base64ToImage, downloadWhatsAppImage, getImageFromJelouPhotoPicker, processImageFile, callOpenAI, callOpenAi4o } = require('./lib/util');
+const { validateLiveness, getBotMemoryRecords, verifyDocument, verifyDocumentAdvanced, compareImages, base64ToImage, downloadWhatsAppImage, getImageFromJelouPhotoPicker, imageAWS, callOpenAI, callOpenAi4o } = require('./lib/util');
 const { decryptMessage, encryptResponse, decryptAESKey } = require('./lib/crypto');
 require('dotenv').config();
 
@@ -562,19 +562,17 @@ app.post('/execute', async (req, res) => {
                      const imageFileUrl = imageResult.mediaUrl || imageResult.url || imageResult;
                      console.log('✅ URL de imagen extraída:', imageFileUrl);
                      
-                     //PASO 2: Ejecutar servicio processImageFile
-                     console.log('🔄 PASO 2: Ejecutando processImageFile...');
-                     const processImageResult = await processImageFile({
-                         file_url: imageFileUrl,
-                         company: company,
-                         user: user
+                     //PASO 2: Ejecutar servicio imageAWS
+                     console.log('🔄 PASO 2: Ejecutando imageAWS...');
+                     const imageAWSResult = await imageAWS({
+                         file_url: imageFileUrl
                      });
                      
-                     if (!processImageResult.success) {
-                         console.error('❌ Error en processImageFile:', processImageResult.error);
-                         throw new Error(`Error en processImageFile: ${processImageResult.error}`);
+                     if (!imageAWSResult.success) {
+                         console.error('❌ Error en imageAWS:', imageAWSResult.error);
+                         throw new Error(`Error en imageAWS: ${imageAWSResult.error}`);
                      }
-                     console.log('✅ processImageFile ejecutado exitosamente:', processImageResult.data);
+                     console.log('✅ imageAWS ejecutado exitosamente:', imageAWSResult.data);
                      
                      // PASO 3: Ejecutar servicio callOpenAI
                      //console.log('🔄 PASO 3: Ejecutando callOpenAI...');
