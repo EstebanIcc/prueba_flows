@@ -81,20 +81,11 @@ Información general del servicio.
 ### URLs de servicios externos
 - `MINITOOLS_BASE64_URL`: URL del servicio de conversión base64 a imagen
 
-### OpenAI API Configuration
-- `OPENAI_API_KEY`: API Key de OpenAI para análisis forense de imágenes
-  - Obtén tu API key desde: https://platform.openai.com/api-keys
-  - Esta key se usa para los servicios `callOpenAI` y `callOpenAi4o`
-
 ## Configuración
 
 1. Copia el archivo `env.example` a `.env`
 2. Configura las variables de entorno según tu entorno
 3. Asegúrate de configurar las claves de encriptación (`PRIVATE_KEY` y `PRIVATE_KEY_PASSPHRASE`)
-4. **Configuración de OpenAI**: 
-   - Ve a https://platform.openai.com/api-keys
-   - Crea una nueva API key
-   - Agrega la key al archivo `.env` como `OPENAI_API_KEY=tu-api-key-aqui`
 
 ## URL del servicio
 
