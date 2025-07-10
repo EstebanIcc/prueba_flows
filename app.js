@@ -1,14 +1,14 @@
 const serverless = require('serverless-http');
 const express = require('express');
-const { validateLiveness, getBotMemoryRecords, verifyDocument, compareImages, base64ToImage, downloadWhatsAppImage, downloadWhatsAppImageByMediaId, getImageFromJelouPhotoPicker } = require('./lib/util');
+const {    compareImages, base64ToImage, downloadWhatsAppImage, getImageFromJelouPhotoPicker, imageAWS,  callOpenAi4o, validacionDocumentoRegula,  ecuGobService, colGobService, chGobService } = require('./lib/util');
+const { validateRegula, validateRegulaAiTool, livenessValidationAws, gobentityvalidation } = require('./lib/validations');
 const { decryptMessage, encryptResponse, decryptAESKey } = require('./lib/crypto');
 require('dotenv').config();
-const axios = require('axios');
 
 const app = express();
 
 // Middleware para parsear JSON
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
 
 /**
  * Convierte un número a su representación en letras en español
@@ -42,7 +42,71 @@ function numeroALetras(num) {
         }
         return unidades[centena] + 'cientos' + (resto === 0 ? '' : ' ' + numeroALetras(resto));
     }
-    return num.toString(); // Para números mayores a 999, devolver como string
+    return num.toString();
+}
+
+/**
+ * Convierte un número en letras a su valor numérico
+ * @param {string} letras - Número en letras
+ * @returns {number} Número convertido
+ */
+function letrasANumero(letras) {
+    const mapeo = {
+        'cero': 0,
+        'uno': 1,
+        'dos': 2,
+        'tres': 3,
+        'cuatro': 4,
+        'cinco': 5,
+        'seis': 6,
+        'siete': 7,
+        'ocho': 8,
+        'nueve': 9,
+        'diez': 10,
+        'once': 11,
+        'doce': 12,
+        'trece': 13,
+        'catorce': 14,
+        'quince': 15,
+        'dieciséis': 16,
+        'diecisiete': 17,
+        'dieciocho': 18,
+        'diecinueve': 19,
+        'veinte': 20,
+        'veintiuno': 21,
+        'veintidós': 22,
+        'veintitrés': 23,
+        'veinticuatro': 24,
+        'veinticinco': 25,
+        'veintiséis': 26,
+        'veintisiete': 27,
+        'veintiocho': 28,
+        'veintinueve': 29,
+        'treinta': 30,
+        'treinta y uno': 31,
+        'treinta y dos': 32,
+        'treinta y tres': 33,
+        'treinta y cuatro': 34,
+        'treinta y cinco': 35,
+        'treinta y seis': 36,
+        'treinta y siete': 37,
+        'treinta y ocho': 38,
+        'treinta y nueve': 39,
+        'cuarenta': 40,
+        'cuarenta y uno': 41,
+        'cuarenta y dos': 42,
+        'cuarenta y tres': 43,
+        'cuarenta y cuatro': 44,
+        'cuarenta y cinco': 45,
+        'cuarenta y seis': 46,
+        'cuarenta y siete': 47,
+        'cuarenta y ocho': 48,
+        'cuarenta y nueve': 49,
+        'cincuenta': 50
+    };
+    
+    const letrasLower = letras.toLowerCase().trim();
+    return mapeo[letrasLower] || 0;
 }
 
 /**
@@ -60,7 +124,6 @@ function obtenerFotoSelfie(requestData) {
         if (requestData[campo]) {
             fotoSelfieData = requestData[campo];
             campoEncontrado = campo;
-            console.log(`✅ Campo encontrado: ${campo}`);
             break;
         }
     }
@@ -90,7 +153,6 @@ function obtenerImagenFrontal(requestData) {
         if (requestData[campo]) {
             imagenFrontalData = requestData[campo];
             campoEncontrado = campo;
-            console.log(`✅ Campo encontrado: ${campo}`);
             break;
         }
     }
@@ -120,7 +182,6 @@ function obtenerImagenPosterior(requestData) {
         if (requestData[campo]) {
             imagenPosteriorData = requestData[campo];
             campoEncontrado = campo;
-            console.log(`✅ Campo encontrado: ${campo}`);
             break;
         }
     }
@@ -164,31 +225,20 @@ const HTTP_CODES = {
     MESSAGE_DECRYPTION_ERROR: 200
 };
 
-// Log para verificar los códigos HTTP configurados
-console.log('🔧 === CONFIGURACIÓN HTTP CODES ===');
-console.log('✅ HTTP_CODES.OK:', HTTP_CODES.OK);
-console.log('❌ HTTP_CODES.BAD_REQUEST:', HTTP_CODES.BAD_REQUEST);
-console.log('❌ HTTP_CODES.INTERNAL_ERROR:', HTTP_CODES.INTERNAL_ERROR);
-console.log('====================================');
-
-// Función para desencriptar datos usando la clave AES
 
 
-// Función para encriptar datos usando la clave AES
-
-
-/**
- * Función para manejar errores y encriptar la respuesta
- */
-const handleEncryptedError = (errorMessage, encrypted_aes_key, initial_vector, statusCode = HTTP_CODES.INTERNAL_ERROR) => {
+// Función para manejar errores y encriptar la respuesta
+const handleEncryptedError = async (errorMessage, encrypted_aes_key, initial_vector, statusCode = HTTP_CODES.INTERNAL_ERROR) => {
     try {
-        const claveAES = decryptAESKey(encrypted_aes_key);
-        const encryptedResponse = encryptResponse({
-            screen: "captura_foto",
+        const claveAES = await decryptAESKey(encrypted_aes_key);
+        const responseData = {
+            screen: "selfie_res",
             data: {
                 Resultado: "error_servicio"
             }
-        }, claveAES, initial_vector);
+        };
+
+        const encryptedResponse = await encryptResponse(responseData, claveAES, initial_vector);
         // Siempre retornar OK (200) para cumplir con WhatsApp Flows
         return { statusCode: HTTP_CODES.OK, response: encryptedResponse };
     } catch (encryptError) {
@@ -305,7 +355,7 @@ app.post('/execute', async (req, res) => {
         
         // Validar campos de encriptación requeridos
         if (!encrypted_flow_data || !encrypted_aes_key || !initial_vector) {
-            const errorResponse = handleEncryptedError(
+            const errorResponse = await handleEncryptedError(
                 'Faltan campos requeridos para desencriptación (encrypted_flow_data, encrypted_aes_key, initial_vector)',
                 encrypted_aes_key,
                 initial_vector,
@@ -318,8 +368,7 @@ app.post('/execute', async (req, res) => {
         
         // Desencriptar el mensaje
         requestBody = await decryptMessage(encrypted_aes_key, encrypted_flow_data, initial_vector);
-        console.log('✅ Datos desencriptados exitosamente');
-        console.log('Datos desencriptados:', JSON.stringify(requestBody, null, 2));
+        console.log('✅ Datos desencriptados exitosamente', requestBody);
         
     } catch (error) {
         console.error('❌ Error en PASO 1 - Desencriptación:', error);
@@ -331,7 +380,7 @@ app.post('/execute', async (req, res) => {
             return res.status(421).send('Error de desencriptación');
         }
         
-        const errorResponse = handleEncryptedError(
+        const errorResponse = await handleEncryptedError(
             `Error al desencriptar mensaje: ${error.message}`,
             encrypted_aes_key,
             initial_vector,
@@ -348,13 +397,9 @@ app.post('/execute', async (req, res) => {
         
         if (requestBody.action === 'ping') {
             console.log('✅ Action es ping, retornando status active');
-            const claveAES = decryptAESKey(encrypted_aes_key);
-            const encryptedResponse = encryptResponse(
-                { data: { status: "active" } }, 
-                claveAES, 
-                initial_vector
-            );
-            console.log('✅ Respuesta encriptada:', encryptedResponse);
+            const claveAES = await decryptAESKey(encrypted_aes_key);
+            const responseData = { data: { status: "active" } };
+            const encryptedResponse = await encryptResponse(responseData, claveAES, initial_vector);
             // Establecer el Content-Type correcto para la respuesta de WhatsApp
             res.setHeader('Content-Type', 'text/plain');
             return res.status(HTTP_CODES.OK).send(encryptedResponse);
@@ -364,13 +409,9 @@ app.post('/execute', async (req, res) => {
         const { intento = 'cero', screen_retry = 'none' } = requestBody.data || {};
         if (intento !== 'cero' && screen_retry !== 'none') {
             console.log('✅ Validación de reintento');
-            const claveAES = decryptAESKey(encrypted_aes_key);
-            const encryptedResponse = encryptResponse(
-                { data: { status: "active", intento: intento }, screen: screen_retry }, 
-                claveAES, 
-                initial_vector
-            );
-            console.log('✅ Respuesta encriptada:', encryptedResponse);
+            const claveAES = await decryptAESKey(encrypted_aes_key);
+            const responseData = { data: { status: "active", intento: intento }, screen: screen_retry };
+            const encryptedResponse = await encryptResponse(responseData, claveAES, initial_vector);
             // Establecer el Content-Type correcto para la respuesta de WhatsApp
             res.setHeader('Content-Type', 'text/plain');
             return res.status(HTTP_CODES.OK).send(encryptedResponse);
@@ -380,14 +421,10 @@ app.post('/execute', async (req, res) => {
         
         const { origen, bot_id, client_id } = requestBody.data || {};
         
-        console.log(`Origen: ${origen}`);
-        console.log(`Bot ID: ${bot_id}`);
-        console.log(`Client ID: ${client_id}`);
-        
         
         // Validar campos requeridos
         if (!origen) {
-            const errorResponse = handleEncryptedError(
+            const errorResponse = await handleEncryptedError(
                 'El campo origen es requerido',
                 encrypted_aes_key,
                 initial_vector,
@@ -399,7 +436,7 @@ app.post('/execute', async (req, res) => {
         }
         
         if (!bot_id || !client_id) {
-            const errorResponse = handleEncryptedError(
+            const errorResponse = await handleEncryptedError(
                 'Los campos bot_id y client_id son requeridos',
                 encrypted_aes_key,
                 initial_vector,
@@ -413,51 +450,80 @@ app.post('/execute', async (req, res) => {
         console.log('✅ Campos requeridos validados correctamente');
         
         // ========== PASO 4: OBTENER INFORMACIÓN DE COMPANY Y USER ==========
-        console.log('\n🏢 PASO 4: Obteniendo información de company y user...');
+        console.log('\n🏢 PASO 4: Obteniendo información de company y user desde datos desencriptados...');
         
-        const memoryRecords = await getBotMemoryRecords(bot_id, client_id);
+        // Obtener company y user desde los datos desencriptados
+        let company, user;
         
-        if (!memoryRecords.data) {
-            const errorResponse = handleEncryptedError(
-                'No se encontraron registros de memoria para bot_id y client_id proporcionados',
+        try {
+            // Verificar si existen los campos company y user en requestBody.data
+            if (requestBody.data?.company && requestBody.data?.user) {
+                // Si ya son objetos, usarlos directamente
+                if (typeof requestBody.data.company === 'object' && typeof requestBody.data.user === 'object') {
+                    company = requestBody.data.company;
+                    user = requestBody.data.user;
+                    console.log('✅ Company y user obtenidos como objetos directamente desde data');
+                } else {
+                    // Si son strings JSON, parsearlos
+                    company = JSON.parse(requestBody.data.company);
+                    user = JSON.parse(requestBody.data.user);
+                    console.log('✅ Company y user parseados desde strings JSON en data');
+                }
+            } else {
+                const errorResponse = await handleEncryptedError(
+                    'No se encontró información completa de compañía o usuario en requestBody.data',
+                    encrypted_aes_key,
+                    initial_vector,
+                    HTTP_CODES.NOT_FOUND
+                );
+                // Establecer el Content-Type correcto para la respuesta de WhatsApp
+                res.setHeader('Content-Type', 'text/plain');
+                return res.status(errorResponse.statusCode).send(errorResponse.response);
+            }
+            
+            console.log('✅ Información de company y user obtenida correctamente');
+            
+        } catch (parseError) {
+            console.error('❌ Error al parsear company o user:', parseError);
+            const errorResponse = await handleEncryptedError(
+                `Error al parsear datos de company o user: ${parseError.message}`,
                 encrypted_aes_key,
                 initial_vector,
-                HTTP_CODES.NOT_FOUND
+                HTTP_CODES.BAD_REQUEST
             );
             // Establecer el Content-Type correcto para la respuesta de WhatsApp
             res.setHeader('Content-Type', 'text/plain');
             return res.status(errorResponse.statusCode).send(errorResponse.response);
         }
         
-        const { company, user } = memoryRecords.data;
-        
-        if (!company || !user) {
-            const errorResponse = handleEncryptedError(
-                'No se encontró información completa de compañía o usuario en los registros',
-                encrypted_aes_key,
-                initial_vector,
-                HTTP_CODES.NOT_FOUND
-            );
-            // Establecer el Content-Type correcto para la respuesta de WhatsApp
-            res.setHeader('Content-Type', 'text/plain');
-            return res.status(errorResponse.statusCode).send(errorResponse.response);
-        }
-        
-        console.log('✅ Información de company y user obtenida correctamente');
-        console.log(`Company: ${company.name || company.id}`);
-        console.log(`User: ${user.name || user.id}`);
+        // Declarar claveAES globalmente después del PASO 4
+        const claveAES = await decryptAESKey(encrypted_aes_key);
         
         // ========== PASO 5: LÓGICA DE SWITCH POR ORIGEN ==========
         console.log(`\n🔀 PASO 5: Ejecutando lógica para origen: ${origen}`);
         
         let result;
         let screenName;
-        let successMessage;
         
         switch (origen) {
             case 'liveness':
                 console.log('📸 Procesando servicio LIVENESS...');
                 screenName = 'selfie_res';
+                
+                // ========== INICIALIZAR VARIABLES DE REINTENTO ==========
+                const reintentoLetrasLiveness = requestBody.data?.intento || 'uno';
+                const maxIntentosLetrasLiveness = requestBody.data?.max_reintentos || 'cinco';
+                
+                let reintentoNumeroLiveness = letrasANumero(reintentoLetrasLiveness);
+                let maxIntentosNumeroLiveness = letrasANumero(maxIntentosLetrasLiveness);
+                
+                // Validar que no exceda el máximo de 5
+                if (reintentoNumeroLiveness > 5) {
+                    reintentoNumeroLiveness = 5;
+                }
+                if (maxIntentosNumeroLiveness > 5) {
+                    maxIntentosNumeroLiveness = 5;
+                }
                 
                 // PASO 7 para LIVENESS: Validar y procesar foto_selfie
                 let fotoSelfieData, campoEncontrado;
@@ -466,7 +532,7 @@ app.post('/execute', async (req, res) => {
                     fotoSelfieData = fotoSelfieResult.fotoSelfieData;
                     campoEncontrado = fotoSelfieResult.campoEncontrado;
                 } catch (fotoError) {
-                    const errorResponse = handleEncryptedError(
+                    const errorResponse = await handleEncryptedError(
                         fotoError.message,
                         encrypted_aes_key,
                         initial_vector,
@@ -478,27 +544,102 @@ app.post('/execute', async (req, res) => {
                 }
                 
                 try {
-                     // Procesar foto_selfie y obtener URL de imagen
+                     // PASO 1: Procesar foto_selfie y obtener URL de imagen
                      const imageResult = await processFotoSelfie(fotoSelfieData);
-                     console.log(`✅ Imagen procesada desde ${campoEncontrado}, resultado obtenido:`, imageResult);
                      
                      // Extraer la URL correcta del resultado
                      const imageFileUrl = imageResult.mediaUrl || imageResult.url || imageResult;
-                     console.log('✅ URL de imagen extraída:', imageFileUrl);
                      
-                     // Ejecutar servicio validateLiveness
-                     result = await validateLiveness({
-                         imageFileUrl: imageFileUrl,
-                         provider: requestBody.data.provider || 'AWS & Groq',
-                         company: company,
-                         user: user
+                     //PASO 2: Ejecutar servicio imageAWS
+                     let result = {
+                        success: false
+                     };
+                     console.log('🔄 PASO 2: Ejecutando imageAWS...');
+                     const imageAWSResult = await imageAWS({
+                         file_url: imageFileUrl
                      });
-                    
+                     const livenessValidationAwsResult = livenessValidationAws(imageAWSResult.data);
+                     
+                     if (livenessValidationAwsResult.isSuccess) {
+                        result.success = true;
+                        console.log('✅ imageAWS ejecutado exitosamente');
+                        
+                        // PASO 4: Ejecutar servicio callOpenAi4o
+                        console.log('🔄 PASO 4: Ejecutando callOpenAi4o...');
+                        const openAI4oResult = await callOpenAi4o({
+                            imageFileUrl: imageFileUrl
+                        });
+                        
+                        if (!openAI4oResult.success) {
+                            result.success = false;
+                        }
+
+                        if (openAI4oResult.data?.output[0]?.content[0]?.text === 'APPROVED') {
+                            result.success = true;
+                        }else{
+                            result.success = false;
+                        }
+                     }else {
+                        result.success = false;
+                     }
+
                     successMessage = 'Validación de liveness ejecutada correctamente';
+                    
+                    // ========== PROCESAR RESULTADO DE LIVENESS ==========
+                    console.log('🎉 Servicio LIVENESS ejecutado exitosamente');
+                    
+                    let resultadoValue;
+                    if (result.success) {
+                        resultadoValue = 'exitoso';
+                        console.log('✅ Resultado: exitoso');
+                    } else {
+                        resultadoValue = 'no_exitoso';
+                        console.log('❌ Resultado: no_exitoso');
+                    }
+                    
+                    // Si es no_exitoso, sumar 1 al reintento
+                    if (resultadoValue === 'no_exitoso') {
+                        reintentoNumeroLiveness = reintentoNumeroLiveness + 1;
+                    }
+                    
+                    if (reintentoNumeroLiveness >= maxIntentosNumeroLiveness) {
+                        console.log('❌ Límite de intentos alcanzado. Enviando error max_intentos directamente');
+                        
+                        const livenessResponse = { 
+                            data: { 
+                                Resultado: 'max_intentos', 
+                                intento: reintentoLetrasLiveness 
+                            }, 
+                            screen: "selfie_res" 
+                        };
+                        
+                        const encryptedResponse = await encryptResponse(livenessResponse, claveAES, initial_vector);
+                        res.setHeader('Content-Type', 'text/plain');
+                        return res.status(HTTP_CODES.OK).send(encryptedResponse);
+                    }
+                    
+                    // Convertir el reintento final a letras
+                    let reintentoFinalEnLetrasLiveness = numeroALetras(reintentoNumeroLiveness);
+                    
+                    // Formato específico para liveness: { data: { Resultado: "exitoso", intento: "uno" }, screen: "selfie_res" }
+                    const livenessResponse = {
+                        data: { 
+                            Resultado: resultadoValue,
+                            intento: reintentoFinalEnLetrasLiveness,
+                            selfie_url: imageFileUrl
+                        },
+                        screen: screenName
+                    };
+                    
+                    // Encriptar respuesta de liveness con formato específico
+                    const encryptedResponse = await encryptResponse(livenessResponse, claveAES, initial_vector);
+                    // Establecer el Content-Type correcto para la respuesta de WhatsApp
+                    res.setHeader('Content-Type', 'text/plain');
+                    return res.status(HTTP_CODES.OK).send(encryptedResponse);
                     
                 } catch (imageError) {
                     console.error('❌ Error al procesar imagen para liveness:', imageError);
-                    const errorResponse = handleEncryptedError(
+                    const errorResponse = await handleEncryptedError(
                         `Error al procesar imagen para liveness: ${imageError.message}`,
                         encrypted_aes_key,
                         initial_vector,
@@ -506,7 +647,6 @@ app.post('/execute', async (req, res) => {
                     );
                     return res.status(errorResponse.statusCode).send(errorResponse.response);
                 }
-                break;
                 
             case 'document_check_1':
                 console.log('📄 Procesando servicio DOCUMENT_CHECK_1...');
@@ -519,7 +659,7 @@ app.post('/execute', async (req, res) => {
                     imagenFrontalData = imagenFrontalResult.imagenFrontalData;
                     campoEncontradoFrontal = imagenFrontalResult.campoEncontrado;
                 } catch (imagenError) {
-                    const errorResponse = handleEncryptedError(
+                    const errorResponse = await handleEncryptedError(
                         imagenError.message,
                         encrypted_aes_key,
                         initial_vector,
@@ -533,35 +673,27 @@ app.post('/execute', async (req, res) => {
                 try {
                     // Procesar imagen frontal y obtener URL de imagen
                     const imageResult = await processFotoSelfie(imagenFrontalData);
-                    console.log(`✅ Imagen frontal procesada desde ${campoEncontradoFrontal}, resultado obtenido:`, imageResult);
                     
                     // Extraer la URL correcta del resultado
                     const urlFront = imageResult.mediaUrl || imageResult.url || imageResult;
-                    console.log('✅ URL de imagen frontal extraída:', urlFront);
                     
                     // Preparar respuesta exitosa con la URL
-                    const claveAES = decryptAESKey(encrypted_aes_key);
-                    console.log("intento", requestBody.data.intento);
-                    const encryptedResponse = encryptResponse(
-                        { 
-                            data: { 
-                                status: "active", 
-                                url_front: urlFront,
-                                intento: requestBody.data.intento
-                            }, 
-                            screen: screenName 
+                    const responseData = { 
+                        data: { 
+                            status: "active", 
+                            url_front: urlFront,
+                            intento: requestBody.data.intento
                         }, 
-                        claveAES, 
-                        initial_vector
-                    );
-                    console.log('✅ Respuesta encriptada:', encryptedResponse);
+                        screen: screenName 
+                    };
+                    const encryptedResponse = await encryptResponse(responseData, claveAES, initial_vector);
                     // Establecer el Content-Type correcto para la respuesta de WhatsApp
                     res.setHeader('Content-Type', 'text/plain');
                     return res.status(HTTP_CODES.OK).send(encryptedResponse);
                     
                 } catch (imageError) {
                     console.error('❌ Error al procesar imagen frontal para document_check_1:', imageError);
-                    const errorResponse = handleEncryptedError(
+                    const errorResponse = await handleEncryptedError(
                         `Error al procesar imagen frontal para document_check_1: ${imageError.message}`,
                         encrypted_aes_key,
                         initial_vector,
@@ -569,16 +701,30 @@ app.post('/execute', async (req, res) => {
                     );
                     return res.status(errorResponse.statusCode).send(errorResponse.response);
                 }
-                break;
                 
             case 'document_check_2':
                 console.log('📄 Procesando servicio DOCUMENT_CHECK_2...');
                 screenName = 'resultado_doc';
                 
+                // ========== INICIALIZAR VARIABLES DE REINTENTO ==========
+                const reintentoLetras = requestBody.data?.intento || 'uno';
+                const maxIntentosLetras = requestBody.data?.max_reintentos || 'cinco';
+                
+                let reintentoNumero = letrasANumero(reintentoLetras);
+                let maxIntentosNumero = letrasANumero(maxIntentosLetras);
+                
+                // Validar que no exceda el máximo de 5
+                if (reintentoNumero > 5) {
+                    reintentoNumero = 5;
+                }
+                if (maxIntentosNumero > 5) {
+                    maxIntentosNumero = 5;
+                }
+                
                 // Obtener url_image_front directamente del request desencriptado
                 const urlImageFront = requestBody.data?.url_front;
                 if (!urlImageFront) {
-                    const errorResponse = handleEncryptedError(
+                    const errorResponse = await handleEncryptedError(
                         'El campo url_front es requerido para el servicio document_check_2',
                         encrypted_aes_key,
                         initial_vector,
@@ -587,7 +733,6 @@ app.post('/execute', async (req, res) => {
                     res.setHeader('Content-Type', 'text/plain');
                     return res.status(errorResponse.statusCode).send(errorResponse.response);
                 }
-                console.log('✅ URL frontal obtenida del request:', urlImageFront);
                 
                 // Validar y procesar imagen posterior
                 let imagenPosteriorData, campoEncontradoPosterior;
@@ -596,7 +741,7 @@ app.post('/execute', async (req, res) => {
                     imagenPosteriorData = imagenPosteriorResult.imagenPosteriorData;
                     campoEncontradoPosterior = imagenPosteriorResult.campoEncontrado;
                 } catch (imagenError) {
-                    const errorResponse = handleEncryptedError(
+                    const errorResponse = await handleEncryptedError(
                         imagenError.message,
                         encrypted_aes_key,
                         initial_vector,
@@ -608,29 +753,123 @@ app.post('/execute', async (req, res) => {
                 
                 try {
                     // Procesar imagen posterior y obtener URL
-                    // Ejecutar servicio verifyDocument
-                    result = await verifyDocument({
-                        url_image_front: urlImageFront,
-                        url_image_back: "https://cdn.jelou.ai/minitools/decoded-images/c1e1134b-c21d-4eaa-9a44-d675b844df56.jpeg",
-                        company: company,
-                        user: user
+                    const imagenPosteriorResult = await processFotoSelfie(imagenPosteriorData);
+                    
+                    // Extraer la URL correcta del resultado
+                    const urlImageBack = imagenPosteriorResult.mediaUrl || imagenPosteriorResult.url || imagenPosteriorResult;
+                
+                    // ========== VERIFICAR MAX_INTENTOS ANTES DE LLAMAR AL SERVICIO ==========
+                    // Verificar si el intento actual es igual al máximo de intentos
+                    
+                
+                    // Obtener parámetros de integración Regula desde el objeto company
+                    const integrationId_regula = company.integrationId_regula;
+                    const integrationId_regula_key = company.integrationId_regula_key;
+                    
+                    if (!integrationId_regula || !integrationId_regula_key) {
+                        throw new Error('Parámetros de integración Regula no encontrados en el objeto company');
+                    }
+                    
+                    // Ejecutar servicio validacionDocumentoRegula con parámetros específicos
+                    result = await validacionDocumentoRegula({
+                        url: urlImageFront,
+                        url_back: urlImageBack,
+                        stage: "prod",
+                        format: "url",
+                        integrationId_regula: integrationId_regula,
+                        integrationId_regula_key: integrationId_regula_key
                     });
                     
-                    successMessage = 'Verificación de documento ejecutada correctamente';
-                    const claveAES = decryptAESKey(encrypted_aes_key);
-                const encryptedResponse = encryptResponse(
-                        { data: { status: "active", Resultado_doc: "exitoso" }, screen: "resultado_doc" }, 
-                        claveAES, 
-                        initial_vector
-                );
-                console.log('✅ Respuesta encriptada:', encryptedResponse);
+                    // ========== VALIDACIÓN DE RESPUESTA DE REGULA ==========
+                    const regulaData = result.data?.data;
+                    const validationResult = validateRegula(regulaData, {
+                        validateExpiry: "false",
+                        validateAge: "false",
+                        type_qa: "bajo"
+                    });
+                    
+                    const { isSuccess, errorCode, errorMessage } = validationResult;
+                    
+                    // ========== VALIDACIÓN REGULA AI TOOL ==========
+                    const aiToolResult = validateRegulaAiTool({
+                        isSuccess: isSuccess,
+                        value: result.data?.data,
+                        errorCode: errorCode,
+                        errorMessage: errorMessage
+                    });
+                    
+                    successMessage = 'Validación de documento con Regula ejecutada correctamente';
+
+                                        // ========== PROCESAR RESULTADO DE DOCUMENT_CHECK_2 ==========
+                    console.log('🎉 Servicio DOCUMENT_CHECK_2 ejecutado exitosamente');
+                    
+                    let resultadoValue;
+                    if (aiToolResult.isSuccess) {
+                        if (aiToolResult.missingFields) {
+                            resultadoValue = 'datos_faltantes';
+                            console.log('⚠️ Resultado: campos_faltantes (AI Tool detectó campos faltantes)');
+                        } else {
+                            resultadoValue = 'exitoso';
+                            console.log('✅ Resultado: exitoso (AI Tool validación exitosa)');
+                        }
+                    } else {
+                        resultadoValue = 'no_exitoso';
+                        console.log('❌ Resultado: no_exitoso (AI Tool validación fallida)');
+                    }
+                        
+                    // Si es no_exitoso, sumar 1 al reintento
+                    if (resultadoValue === 'no_exitoso') {
+                        reintentoNumero = reintentoNumero + 1;
+                    }
+                    
+                    if (reintentoNumero >= maxIntentosNumero) {
+                        console.log('❌ Límite de intentos alcanzado. Enviando error max_intentos directamente');
+                        
+                        // Obtener document_url desde el path data.images_extracted.ghost_portrait.image
+                        const documentUrl = result.data?.data?.images_extracted?.ghost_portrait?.image;
+                        
+                        const responseData = { 
+                            data: { 
+                                Resultado_doc: 'max_intentos', 
+                                intento: reintentoLetras,
+                                document_check_data: JSON.stringify(aiToolResult.document_check_data || {}),
+                                datos_faltantes: JSON.stringify(aiToolResult.missingFields || {}),
+                                document_url: documentUrl || null
+                            }, 
+                            screen: "resultado_doc" 
+                        };
+                        
+                        const encryptedResponse = await encryptResponse(responseData, claveAES, initial_vector);
+                        res.setHeader('Content-Type', 'text/plain');
+                        return res.status(HTTP_CODES.OK).send(encryptedResponse);
+                    }
+                    
+                    // Convertir el reintento final a letras
+                    let reintentoFinalEnLetras = numeroALetras(reintentoNumero);
+                    
+                    // Obtener document_url desde el path data.images_extracted.ghost_portrait.image
+                    const documentUrl = result.data?.data?.images_extracted?.ghost_portrait?.image;
+                    
+                    // Encriptar respuesta de document_check con formato específico
+                    const responseData = { 
+                        data: { 
+                            Resultado_doc: resultadoValue, 
+                            intento: reintentoFinalEnLetras,
+                            document_check_data: JSON.stringify(aiToolResult.document_check_data || {}),
+                            datos_faltantes: JSON.stringify(aiToolResult.missingFields || {}),
+                            document_url: documentUrl || null
+                        }, 
+                        screen: "resultado_doc" 
+                    };
+                    const encryptedResponse = await encryptResponse(responseData, claveAES, initial_vector);
                     // Establecer el Content-Type correcto para la respuesta de WhatsApp
-                res.setHeader('Content-Type', 'text/plain');
-                console.log("envios document_check")
-                return res.status(HTTP_CODES.OK).send(encryptedResponse); 
+                    res.setHeader('Content-Type', 'text/plain');
+                    console.log("envios document_check");
+                    return res.status(HTTP_CODES.OK).send(encryptedResponse);
+                    
                 } catch (imageError) {
                     console.error('❌ Error al procesar imagen posterior para document_check_2:', imageError);
-                    const errorResponse = handleEncryptedError(
+                    const errorResponse = await handleEncryptedError(
                         `Error al procesar imagen posterior para document_check_2: ${imageError.message}`,
                         encrypted_aes_key,
                         initial_vector,
@@ -638,21 +877,18 @@ app.post('/execute', async (req, res) => {
                     );
                     return res.status(errorResponse.statusCode).send(errorResponse.response);
                 }
-                break;
-                
-            case 'facematch':
-                console.log('👥 Procesando servicio FACEMATCH...');
-                screenName = 'resultado_final';
+            case 'gob_entity':
+                console.log('🏛️ Procesando servicio GOB_ENTITY...');
+                screenName = 'resultado_gov';
                 
                 try {
-                    // Obtener datos desde memoryRecords
-                    console.log('📋 Obteniendo datos de facematch desde memoryRecords...');
+                    // Obtener datos requeridos del request
+                    let documentCheckData = requestBody.data?.document_check_data;
+                    let datosFaltantes = requestBody.data?.datos_faltantes || " ";
                     
-                    // Obtener foto_selfie desde response_vivacidad_pasiva.imgURL
-                    const fotoSelfieUrl = memoryRecords.data?.response_vivacidad_pasiva?.imgURL;
-                    if (!fotoSelfieUrl) {
-                        const errorResponse = handleEncryptedError(
-                            'No se encontró foto_selfie en response_vivacidad_pasiva.imgURL',
+                    if (!documentCheckData) {
+                        const errorResponse = await handleEncryptedError(
+                            'No se encontró document_check_data en el request',
                             encrypted_aes_key,
                             initial_vector,
                             HTTP_CODES.BAD_REQUEST
@@ -660,26 +896,209 @@ app.post('/execute', async (req, res) => {
                         res.setHeader('Content-Type', 'text/plain');
                         return res.status(errorResponse.statusCode).send(errorResponse.response);
                     }
-                    console.log('✅ Foto selfie obtenida:', fotoSelfieUrl);
                     
-                    // Obtener document_selfie desde document_check_data.images_extracted.portrait.image
-                    let documentSelfieUrl;
-                    
-                    // Validar si flagGovValidation es true para obtener la foto desde gov_entity_data
-                    if (memoryRecords.data?.flagGovValidation === true) {
-                        console.log('🏛️ FlagGovValidation es true, obteniendo foto desde gov_entity_data...');
-                        documentSelfieUrl = memoryRecords.data?.gov_entity_data?.fotografia;
-                        console.log('✅ Foto obtenida desde gov_entity_data.fotografia:', documentSelfieUrl);
-                    } else {
-                        console.log('📄 FlagGovValidation es false, usando foto por defecto...');
-                        documentSelfieUrl = memoryRecords.data?.document_check_data?.data_image?.images_extracted?.portrait?.image;
-                        console.log('✅ Foto obtenida desde document_check_data:', documentSelfieUrl);
+                    // Convertir strings a JSON
+                    try {
+                        if (typeof documentCheckData === 'string') {
+                            documentCheckData = JSON.parse(documentCheckData);
+                        }
+                        if (typeof datosFaltantes === 'string') {
+                            datosFaltantes = JSON.parse(datosFaltantes);
+                        }
+                    } catch (parseError) {
+                        console.error('❌ Error al parsear datos del documento:', parseError.message);
+                        const errorResponse = await handleEncryptedError(
+                            'Error al parsear datos del documento',
+                            encrypted_aes_key,
+                            initial_vector,
+                            HTTP_CODES.BAD_REQUEST
+                        );
+                        res.setHeader('Content-Type', 'text/plain');
+                        return res.status(errorResponse.statusCode).send(errorResponse.response);
                     }
                     
-                    console.log("documentSelfieUrl", documentSelfieUrl);
-                    if (!documentSelfieUrl) {
-                        const errorResponse = handleEncryptedError(
-                            'No se encontró document_selfie en las rutas disponibles (gov_entity_data.fotografia o document_check_data.data_image.images_extracted.portrait.image)',
+                    // Ejecutar validación de entidad gubernamental
+                    const validationResult = gobentityvalidation(documentCheckData.document_check_data, datosFaltantes, user, company);
+                    
+                    if (!validationResult.isValid) {
+                        const errorResponse = await handleEncryptedError(
+                            `Error en validación de entidad gubernamental: ${validationResult.error}`,
+                            encrypted_aes_key,
+                            initial_vector,
+                            HTTP_CODES.BAD_REQUEST
+                        );
+                        res.setHeader('Content-Type', 'text/plain');
+                        return res.status(errorResponse.statusCode).send(errorResponse.response);
+                    }
+                    
+                    console.log('✅ Validación de entidad gubernamental exitosa');
+                    console.log('🌍 País detectado:', validationResult.country);
+                    
+                    // Ejecutar servicio según el país
+                    let result;
+                    switch (validationResult.country) {
+                        case 'ECUADOR':
+                            console.log('🇪🇨 Ejecutando servicio gubernamental de Ecuador...');
+                            result = await ecuGobService({
+                                codigo_dactilar: validationResult.data_input.codigo_dactilar,
+                                cedula: validationResult.data_input.cedula,
+                                company: company,
+                                user: user
+                            });
+                            break;
+                            
+                        case 'COLOMBIA':
+                            console.log('🇨🇴 Ejecutando servicio gubernamental de Colombia...');
+                            result = await colGobService({
+                                document_type: validationResult.data_input.document_type,
+                                proveedor: validationResult.data_input.proveedor,
+                                dni: validationResult.data_input.dni,
+                                company: company,
+                                user: user
+                            });
+                            break;
+                            
+                        case 'CHILE':
+                            console.log('🇨🇱 Ejecutando servicio gubernamental de Chile...');
+                            result = await chGobService({
+                                dni: validationResult.data_input.dni,
+                                company: company,
+                                user: user
+                            });
+                            break;
+                            
+                        case 'PERU':
+                            result = {
+                                success: true,
+                                error: 'Servicio para Perú no implementado aún'
+                            };
+                            break;
+                            
+                        case 'MEXICO':
+                            result = {
+                                success: true,
+                                error: 'Servicio para México no implementado aún'
+                            };
+                            break;
+                            
+                        default:
+                            result = {
+                                success: false,
+                                error: `País no soportado: ${validationResult.country}`
+                            };
+                            break;
+                    }
+                    
+                    successMessage = 'Validación de entidad gubernamental ejecutada correctamente';
+                    
+                    // ========== PROCESAR RESULTADO DE GOB_ENTITY ==========
+                    if (result.success) {
+                        console.log('🎉 Servicio GOB_ENTITY ejecutado exitosamente');
+                        
+                        let resultadoValue;
+                        if (result.data?.data?.output?.type === 'SUCCESS') {
+                            resultadoValue = 'exitoso';
+                            console.log('✅ Resultado: exitoso');
+                        } else if (result.data?.data?.output?.type === 'FAILED') {
+                            resultadoValue = 'no_exitoso';
+                            console.log('❌ Resultado: no_exitoso');
+                        } else {
+                            resultadoValue = 'error_servicio';
+                            console.log('❌ Resultado:', resultadoValue);
+                        }
+                        
+                        // Obtener selfie_gov para Ecuador desde el path data.value.body.fotografía
+                        let selfieGov = documentCheckData.document_check_data?.document_check_data?.images_extracted?.portrait?.image;
+                        if (validationResult.country === 'ECUADOR') {
+                            selfieGov = result.data?.data?.output?.value?.body?.fotografia;
+                        }
+                        
+                        // Encriptar respuesta de gob_entity con formato específico
+                        const responseData = { 
+                            data: { 
+                                status: "active", 
+                                resultado_gov: resultadoValue,
+                                gov_entity_data: result.data?.data || {},
+                                country: validationResult.country,
+                                provider: validationResult.provider,
+                                selfie_gov: selfieGov
+                            }, 
+                            screen: screenName 
+                        };
+                        console.log('responseData', responseData);
+                        const encryptedResponse = await encryptResponse(responseData, claveAES, initial_vector);
+                        res.setHeader('Content-Type', 'text/plain');
+                        return res.status(HTTP_CODES.OK).send(encryptedResponse);
+                    } else {
+                        console.log('❌ Servicio GOB_ENTITY falló:', result.error);
+                        
+                        // Formato específico para error de gob_entity
+                        const gobEntityErrorResponse = {
+                            data: {
+                                Resultado: 'error_servicio',
+                                error: result.error
+                            },
+                            screen: "resultado_gov"
+                        };
+                        
+                        const encryptedResponse = await encryptResponse(gobEntityErrorResponse, claveAES, initial_vector);
+                        res.setHeader('Content-Type', 'text/plain');
+                        return res.status(HTTP_CODES.OK).send(encryptedResponse);
+                    }
+                    
+                } catch (gobEntityError) {
+                    console.error('❌ Error al procesar gob_entity:', gobEntityError);
+                    const errorResponse = await handleEncryptedError(
+                        `Error al procesar gob_entity: ${gobEntityError.message}`,
+                        encrypted_aes_key,
+                        initial_vector,
+                        HTTP_CODES.BAD_REQUEST
+                    );
+                    res.setHeader('Content-Type', 'text/plain');
+                    return res.status(errorResponse.statusCode).send(errorResponse.response);
+                }
+                
+            case 'facematch':
+                console.log('👥 Procesando servicio FACEMATCH...');
+                screenName = 'resultado_final';
+                
+                try {
+                    // Obtener datos desde los datos desencriptados
+                    console.log('📋 Obteniendo datos de facematch desde datos desencriptados...');
+                    
+                    // Obtener selfie_url del requestBody
+                    const selfieUrl = requestBody.data?.selfie_url;
+                    if (!selfieUrl) {
+                        const errorResponse = await handleEncryptedError(
+                            'No se encontró selfie_url en el request',
+                            encrypted_aes_key,
+                            initial_vector,
+                            HTTP_CODES.BAD_REQUEST
+                        );
+                        res.setHeader('Content-Type', 'text/plain');
+                        return res.status(errorResponse.statusCode).send(errorResponse.response);
+                    }
+                    
+                    // Obtener selfie_gov del requestBody
+                    const selfieGov = requestBody.data?.selfie_gov;
+                    
+                    // Obtener document_url del requestBody
+                    const documentUrl = requestBody.data?.document_url;
+                    
+                    // Obtener flagGovValidation del company, si no existe setear como true
+                    const flagGovValidation = company?.flagGovValidation ?? true;
+                    
+                    // Determinar image_url_2 basado en flagGovValidation
+                    let imageUrl2;
+                    if (flagGovValidation === true) {
+                        imageUrl2 = selfieGov;
+                    } else {
+                        imageUrl2 = documentUrl;
+                    }
+                    
+                    if (!imageUrl2) {
+                        const errorResponse = await handleEncryptedError(
+                            'No se encontró imagen válida para image_url_2 (selfie_gov o document_url)',
                             encrypted_aes_key,
                             initial_vector,
                             HTTP_CODES.BAD_REQUEST
@@ -690,12 +1109,11 @@ app.post('/execute', async (req, res) => {
                     
                     // Obtener threshold desde la ruta principal, si no existe usar "70"
                     const threshold = requestBody.data?.threshold || "70";
-                    console.log('✅ Threshold obtenido:', threshold);
                     
                     // Ejecutar servicio compareImages
                     result = await compareImages({
-                        image_url_1: fotoSelfieUrl,
-                        image_url_2: documentSelfieUrl,
+                        image_url_1: selfieUrl,
+                        image_url_2: imageUrl2,
                         threshold: threshold,
                         company: company,
                         user: user
@@ -703,9 +1121,50 @@ app.post('/execute', async (req, res) => {
                     
                     successMessage = 'Comparación de imágenes ejecutada correctamente';
                     
+                    // ========== PROCESAR RESULTADO DE FACEMATCH ==========
+                    if (result.success) {
+                        console.log('🎉 Servicio FACEMATCH ejecutado exitosamente');
+                        
+                        let resultadoValue;
+                        if (result.data?.data?.output?.type === 'SUCCESS') {
+                            resultadoValue = 'exitoso';
+                            console.log('✅ Resultado: exitoso');
+                        } else if (result.data?.data?.output?.type === 'FAILED') {
+                            resultadoValue = 'no_exitoso';
+                            console.log('❌ Resultado: no_exitoso');
+                        } else {
+                            resultadoValue = 'error_servicio';
+                            console.log('❌ Resultado:', resultadoValue);
+                        }
+                        
+                        // Encriptar respuesta de facematch con formato específico
+                        const responseData = { data: { status: "active", resultado_fm: resultadoValue }, screen: screenName };
+                        const encryptedResponse = await encryptResponse(responseData, claveAES, initial_vector);
+                        // Establecer el Content-Type correcto para la respuesta de WhatsApp
+                        res.setHeader('Content-Type', 'text/plain');
+                        return res.status(HTTP_CODES.OK).send(encryptedResponse);
+                    } else {
+                        console.log('❌ Servicio FACEMATCH falló:', result.error);
+                        
+                        // Formato específico para error de facematch: { data: { Resultado: "error_servicio" }, screen: "captura_foto" }
+                        const facematchErrorResponse = {
+                            data: {
+                                Resultado: 'error_servicio'
+                            },
+                            screen: "resultado_final"
+                        };
+                        
+                        // Encriptar respuesta de error de facematch
+                        const encryptedResponse = await encryptResponse(facematchErrorResponse, claveAES, initial_vector);
+                        
+                        // Establecer el Content-Type correcto para la respuesta de WhatsApp
+                        res.setHeader('Content-Type', 'text/plain');
+                        return res.status(HTTP_CODES.OK).send(encryptedResponse);
+                    }
+                    
                 } catch (facematchError) {
                     console.error('❌ Error al procesar facematch:', facematchError);
-                    const errorResponse = handleEncryptedError(
+                    const errorResponse = await handleEncryptedError(
                         `Error al procesar facematch: ${facematchError.message}`,
                         encrypted_aes_key,
                         initial_vector,
@@ -714,12 +1173,12 @@ app.post('/execute', async (req, res) => {
                     res.setHeader('Content-Type', 'text/plain');
                     return res.status(errorResponse.statusCode).send(errorResponse.response);
                 }
-                break;
                 
+            
             default:
                 console.log(`❌ Servicio no válido: ${origen}`);
-                const errorResponse = handleEncryptedError(
-                    `Servicio no válido: ${origen}. Servicios disponibles: liveness, document_check, facematch`,
+                const errorResponse = await handleEncryptedError(
+                    `Servicio no válido: ${origen}. Servicios disponibles: liveness, document_check, facematch, gob_entity`,
                     encrypted_aes_key,
                     initial_vector,
                     HTTP_CODES.BAD_REQUEST
@@ -729,210 +1188,13 @@ app.post('/execute', async (req, res) => {
                 return res.status(errorResponse.statusCode).send(errorResponse.response);
         }
         
-        // ========== PASO 6: PROCESAR RESULTADO DEL SERVICIO ==========
-        console.log(`\n✅ PASO 6: Procesando resultado del servicio ${origen}...`);
-        
-         if (result.success) {
-             console.log('🎉 Servicio ejecutado exitosamente:', result);
-             
-             // Preparar respuesta según el origen del servicio
-             let responseData = { ...result.data };
-             
-             // Para el servicio de liveness, usar formato específico
-             if (origen === 'liveness') {
-                 console.log('📸 Procesando respuesta de LIVENESS...');
-                 console.log('Tipo de resultado:', result.data?.data?.output?.type);
-                 
-                 // Obtener contador_biometria del memory en el momento actual
-                 console.log('🔄 Obteniendo contador_biometria actualizado del memory...');
-                 const currentMemoryRecords = await getBotMemoryRecords(bot_id, client_id);
-                 const contadorBiometria = currentMemoryRecords.data?.contador_biometria || 1;
-                 console.log('🔢 Contador de biometría obtenido:', contadorBiometria);
-                 
-                 // Convertir el número a letras
-                 let intentoEnLetras = numeroALetras(contadorBiometria);
-                 console.log('📝 Intento en letras:', intentoEnLetras);
-                 
-                 // Determinar el valor de Resultado basado en el type
-                 let resultadoValue;
-                 if (result.data?.data?.output?.type === 'SUCCESS') {
-                     resultadoValue = 'exitoso';
-                     if (contadorBiometria === "0" || contadorBiometria === 0) {
-                        intentoEnLetras = 'cero';
-                     }
-                     console.log('✅ Resultado: exitoso');
-                 } else if (result.data?.data?.output?.type === 'FAILED') {
-                     // Verificar si el error es por límite de reintentos
-                     const errorCode = result.data?.data?.output?.value?.error_code;
-                     console.log('🔍 Error code encontrado:', errorCode);
-                     
-                     if (errorCode === 'limit_retries') {
-                         resultadoValue = 'max_intentos';
-                         console.log('❌ Resultado: max_intentos (límite de reintentos alcanzado)');
-                     } else {
-                         resultadoValue = 'no_exitoso';
-                         console.log('❌ Resultado: no_exitoso');
-                     }
-                 } else {
-                     resultadoValue = 'error_servicio';
-                     console.log('❌ Resultado:', resultadoValue);
-                 }
-                 
-                 // Formato específico para liveness: { data: { Resultado: "exitoso", intento: "uno" }, screen: "selfie_res" }
-                 const livenessResponse = {
-                     data: { 
-                         Resultado: resultadoValue,
-                         intento: intentoEnLetras
-                     },
-                     screen: screenName
-                 };
-                 
-                 console.log('📋 Respuesta final de liveness:', JSON.stringify(livenessResponse, null, 2));
-                 
-                 // Encriptar respuesta de liveness con formato específico
-                 const claveAES = decryptAESKey(encrypted_aes_key);
-                 const encryptedResponse = encryptResponse(livenessResponse, claveAES, initial_vector);
-                 console.log('✅ Respuesta encriptada liveness:', encryptedResponse);
-                 // Establecer el Content-Type correcto para la respuesta de WhatsApp
-                 res.setHeader('Content-Type', 'text/plain');
-                 return res.status(HTTP_CODES.OK).send(encryptedResponse);
-             }
-             else if (origen === 'document_check_2') {
-                let resultadoValue;
-                 if (result.data?.data?.output?.type === 'SUCCESS') {
-                     resultadoValue = 'exitoso';
-                     console.log('✅ Resultado: exitoso');
-                 } else if (result.data?.data?.output?.type === 'FAILED') {
-                     resultadoValue = 'no_exitoso';
-                     console.log('❌ Resultado: no_exitoso');
-                 } else {
-                     resultadoValue = 'error_servicio';
-                     console.log('❌ Resultado:', resultadoValue);
-                 }
-                const claveAES = decryptAESKey(encrypted_aes_key);
-                const encryptedResponse = encryptResponse(
-                        { data: { status: "active", Resultado_doc: "exitoso" }, screen: "resultado_doc" }, 
-                        claveAES, 
-                        initial_vector
-                );
-                console.log('✅ Respuesta encriptada:', encryptedResponse);
-                    // Establecer el Content-Type correcto para la respuesta de WhatsApp
-                res.setHeader('Content-Type', 'text/plain');
-                console.log("envios document_check")
-                return res.status(HTTP_CODES.OK).send(encryptedResponse); 
-            
-            }
-            else if (origen === 'facematch') {
-                let resultadoValue;
-                if (result.data?.data?.output?.type === 'SUCCESS') {
-                    resultadoValue = 'exitoso';
-                    console.log('✅ Resultado: exitoso');
-                } else if (result.data?.data?.output?.type === 'FAILED') {
-                    resultadoValue = 'no_exitoso';
-                    console.log('❌ Resultado: no_exitoso');
-                } else {
-                    resultadoValue = 'error_servicio';
-                    console.log('❌ Resultado:', resultadoValue);
-                }
-                const claveAES = decryptAESKey(encrypted_aes_key);
-                const encryptedResponse = encryptResponse(
-                        { data: { status: "active", Resultado: resultadoValue }, screen: screenName }, 
-                        claveAES, 
-                        initial_vector
-                );
-                console.log('✅ Respuesta encriptada:', encryptedResponse);
-                // Establecer el Content-Type correcto para la respuesta de WhatsApp
-                res.setHeader('Content-Type', 'text/plain');
-                console.log("envios facematch")
-                return res.status(HTTP_CODES.OK).send(encryptedResponse); 
-            }
-             // Para otros servicios, usar formato original
-             // Encriptar respuesta exitosa
-             const claveAES = decryptAESKey(encrypted_aes_key);
-             const encryptedResponse = encryptResponse({
-                 success: true,
-                 data: responseData,
-                 message: successMessage,
-                 screen: screenName
-             }, claveAES, initial_vector);
-             
-             // Establecer el Content-Type correcto para la respuesta de WhatsApp
-             res.setHeader('Content-Type', 'text/plain');
-             console.log("🔍 === LOG DOCUMENT_CHECK EXITOSO ===");
-             console.log("📄 Origen:", origen);
-             console.log("🔢 Status Code a enviar:", HTTP_CODES.OK);
-             console.log("📋 Headers configurados:", res.getHeaders());
-             console.log("📦 Body a enviar:", "08SdfmYxNyCIFCHgH5615cNIcgxhnENQltNJhcEQR9WI1dBJsPSpp5jtjCt+2e4f8z2OzjnSh42cNGkvleN9nxW0CaBBlQ==");
-             console.log("=====================================");
-             return res.status(HTTP_CODES.OK).send(encryptedResponse);
-             
-         } else {
-             console.log('❌ Servicio falló:', result.error);
-             
-             // Para errores del servicio de liveness, usar formato específico
-             if (origen === 'liveness') {
-                 console.log('📸 Procesando error de LIVENESS...');
-                 
-                 // Formato específico para error de liveness: { data: { Resultado: "error_servicio" }, screen: "captura_foto" }
-                 const livenessErrorResponse = {
-                     data: {
-                         Resultado: 'error_servicio'
-                     },
-                     screen: "captura_foto"
-                 };
-                 
-                 console.log('📋 Respuesta de error de liveness:', JSON.stringify(livenessErrorResponse, null, 2));
-                 
-                 const claveAES = decryptAESKey(encrypted_aes_key);
-                 const encryptedResponse = encryptResponse(livenessErrorResponse, claveAES, initial_vector);
-                 
-                 // Establecer el Content-Type correcto para la respuesta de WhatsApp
-                 res.setHeader('Content-Type', 'text/plain');
-                 return res.status(HTTP_CODES.OK).send(encryptedResponse);
-             } else if (origen === 'document_check_2') {
-                 console.log('📄 Procesando error de DOCUMENT_CHECK...');
-                 
-                 // Formato específico para error de document_check: { data: { Resultado: "error_servicio" }, screen: "captura_foto" }
-                 const documentCheckErrorResponse = {
-                     data: {
-                         Resultado: 'error_servicio'
-                     },
-                     screen: "captura_foto"
-                 };
-                 
-                 console.log('📋 Respuesta de error de document_check:', JSON.stringify(documentCheckErrorResponse, null, 2));
-                 
-                 const claveAES = decryptAESKey(encrypted_aes_key);
-                 const encryptedResponse = encryptResponse(documentCheckErrorResponse, claveAES, initial_vector);
-                 
-                 // Establecer el Content-Type correcto para la respuesta de WhatsApp
-                 res.setHeader('Content-Type', 'text/plain');
-                 console.log("🔍 === LOG ERROR DOCUMENT_CHECK ===");
-                 console.log("📄 Origen:", origen);
-                 console.log("🔢 Status Code a enviar:", HTTP_CODES.OK);
-                 console.log("📋 Headers configurados:", res.getHeaders());
-                 console.log("📦 Body a enviar (primeros 100 chars):", encryptedResponse.substring(0, 100));
-                 console.log("=====================================");
-                 return res.status(HTTP_CODES.OK).send(encryptedResponse);
-             } else {
-                 // PASO 7: Error del servicio - encriptar respuesta de error (otros servicios)
-                 const errorResponse = handleEncryptedError(
-                     result.error || `Error al ejecutar servicio ${origen}`,
-                     encrypted_aes_key,
-                     initial_vector,
-                     result.status || HTTP_CODES.INTERNAL_ERROR
-                 );
-                 // Establecer el Content-Type correcto para la respuesta de WhatsApp
-                 res.setHeader('Content-Type', 'text/plain');
-                 return res.status(HTTP_CODES.OK).send(errorResponse.response);
-             }
-         }
+      
         
     } catch (error) {
         console.error('❌ Error general en el procesamiento:', error);
         
         // PASO 7: Error general - encriptar respuesta de error
-        const errorResponse = handleEncryptedError(
+        const errorResponse = await handleEncryptedError(
             `Error interno del servidor: ${error.message}`,
             encrypted_aes_key,
             initial_vector,
