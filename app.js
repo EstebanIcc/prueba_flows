@@ -10,6 +10,19 @@ const app = express();
 // Middleware para parsear JSON
 app.use(express.json({ limit: '50mb' }));
 
+function capitalize(text) {
+    if (!text) return "";
+    
+    return text
+      .toLowerCase()
+      .split(" ")
+      .map(word => {
+        if (word.length === 0) return ""; // evita errores con espacios dobles
+        return word.charAt(0).toUpperCase() + word.slice(1);
+      })
+      .join(" ");
+  }
+
 /**
  * Convierte un número a su representación en letras en español
  * @param {number} num - Número a convertir
@@ -410,7 +423,23 @@ app.post('/execute', async (req, res) => {
         if (intento !== 'cero' && screen_retry !== 'none') {
             console.log('✅ Validación de reintento');
             const claveAES = await decryptAESKey(encrypted_aes_key);
-            const responseData = { data: { status: "active", intento: intento }, screen: screen_retry };
+            let responseData;
+            if (screen_retry === 'finalizar') {
+                responseData = { 
+                    data: { 
+                        "extension_message_response":{
+                            "params":{
+                                status: "max_intentos",
+                                origen: requestBody.data.origen,
+                            }
+                        }
+                        
+                    }, 
+                    screen: "SUCCESS" 
+                };
+            }else{
+                responseData = { data: { status: "active", intento: intento }, screen: screen_retry };
+            }
             const encryptedResponse = await encryptResponse(responseData, claveAES, initial_vector);
             // Establecer el Content-Type correcto para la respuesta de WhatsApp
             res.setHeader('Content-Type', 'text/plain');
@@ -588,12 +617,15 @@ app.post('/execute', async (req, res) => {
                     // ========== PROCESAR RESULTADO DE LIVENESS ==========
                     console.log('🎉 Servicio LIVENESS ejecutado exitosamente');
                     
-                    let resultadoValue;
+                    let resultadoValue, errorMessage;
                     if (result.success) {
                         resultadoValue = 'exitoso';
+                        screenName = "documento"
+                        
                         console.log('✅ Resultado: exitoso');
                     } else {
                         resultadoValue = 'no_exitoso';
+                        errorMessage = livenessValidationAwsResult?.errorMessage || "Error al validar vivacidad del usuario";
                         console.log('❌ Resultado: no_exitoso');
                     }
                     
@@ -626,6 +658,7 @@ app.post('/execute', async (req, res) => {
                         data: { 
                             Resultado: resultadoValue,
                             intento: reintentoFinalEnLetrasLiveness,
+                            detalle_error: errorMessage,
                             selfie_url: imageFileUrl
                         },
                         screen: screenName
@@ -802,9 +835,13 @@ app.post('/execute', async (req, res) => {
 
                                         // ========== PROCESAR RESULTADO DE DOCUMENT_CHECK_2 ==========
                     console.log('🎉 Servicio DOCUMENT_CHECK_2 ejecutado exitosamente');
-                    
+                    let documentCheckPais, documentCheckNombre, documentCheckCedula, documentCheckCdv;
                     let resultadoValue;
                     if (aiToolResult.isSuccess) {
+                        documentCheckPais = aiToolResult.document_check_data.document_check_data.document_check_data.details?.document_country_name;
+                        documentCheckNombre = aiToolResult.document_check_data.document_check_data.document_check_data.verified_fields?.surname_and_given_names;
+                        documentCheckCedula = aiToolResult.document_check_data.document_check_data.document_check_data.verified_fields?.document_number;
+                        documentCheckCdv = aiToolResult.document_check_data.document_check_data.document_check_data.verified_fields?.identifier;
                         if (aiToolResult.missingFields) {
                             resultadoValue = 'datos_faltantes';
                             console.log('⚠️ Resultado: campos_faltantes (AI Tool detectó campos faltantes)');
@@ -849,7 +886,10 @@ app.post('/execute', async (req, res) => {
                     
                     // Obtener document_url desde el path data.images_extracted.ghost_portrait.image
                     const documentUrl = result.data?.data?.images_extracted?.ghost_portrait?.image;
-                    
+                    // obtener el campo de la document_check_pais, document_check_nombre, document_check_cedula, document_check_cd
+                    console.log("aiToolResult", aiToolResult.document_check_data.document_check_data);
+                   
+
                     // Encriptar respuesta de document_check con formato específico
                     const responseData = { 
                         data: { 
@@ -857,10 +897,15 @@ app.post('/execute', async (req, res) => {
                             intento: reintentoFinalEnLetras,
                             document_check_data: JSON.stringify(aiToolResult.document_check_data || {}),
                             datos_faltantes: JSON.stringify(aiToolResult.missingFields || {}),
-                            document_url: documentUrl || null
+                            document_url: documentUrl || null,
+                            document_check_pais: documentCheckPais,
+                            document_check_nombre: capitalize(documentCheckNombre),
+                            document_check_cedula: documentCheckCedula,
+                            document_check_cd: documentCheckCdv
                         }, 
                         screen: "resultado_doc" 
                     };
+                    console.log("responseData", responseData);
                     const encryptedResponse = await encryptResponse(responseData, claveAES, initial_vector);
                     // Establecer el Content-Type correcto para la respuesta de WhatsApp
                     res.setHeader('Content-Type', 'text/plain');
@@ -879,12 +924,13 @@ app.post('/execute', async (req, res) => {
                 }
             case 'gob_entity':
                 console.log('🏛️ Procesando servicio GOB_ENTITY...');
-                screenName = 'resultado_gov';
+                screenName = 'SUCCESS';
                 
                 try {
                     // Obtener datos requeridos del request
                     let documentCheckData = requestBody.data?.document_check_data;
                     let datosFaltantes = requestBody.data?.datos_faltantes || " ";
+                    let selfieUrl = requestBody.data?.selfie_url || " ";
                     
                     if (!documentCheckData) {
                         const errorResponse = await handleEncryptedError(
@@ -916,7 +962,24 @@ app.post('/execute', async (req, res) => {
                         res.setHeader('Content-Type', 'text/plain');
                         return res.status(errorResponse.statusCode).send(errorResponse.response);
                     }
-                    
+                    const responseData = { 
+                        data: { 
+                            "extension_message_response":{
+                                "params":{
+                                    status: "active",
+                                    document_check_data: documentCheckData.document_check_data,
+                                    selfie_url: selfieUrl,
+                                    datos_faltantes: datosFaltantes
+                                }
+                            }
+                            
+                        }, 
+                        screen: screenName 
+                    };
+                    console.log('responseData', responseData);
+                    const encryptedResponse = await encryptResponse(responseData, claveAES, initial_vector);
+                    res.setHeader('Content-Type', 'text/plain');
+                    return res.status(HTTP_CODES.OK).send(encryptedResponse);
                     // Ejecutar validación de entidad gubernamental
                     const validationResult = gobentityvalidation(documentCheckData.document_check_data, datosFaltantes, user, company);
                     
@@ -998,6 +1061,7 @@ app.post('/execute', async (req, res) => {
                         let resultadoValue;
                         if (result.data?.data?.output?.type === 'SUCCESS') {
                             resultadoValue = 'exitoso';
+                            screenName = 'SUCCESS';
                             console.log('✅ Resultado: exitoso');
                         } else if (result.data?.data?.output?.type === 'FAILED') {
                             resultadoValue = 'no_exitoso';
@@ -1021,7 +1085,9 @@ app.post('/execute', async (req, res) => {
                                 gov_entity_data: result.data?.data || {},
                                 country: validationResult.country,
                                 provider: validationResult.provider,
-                                selfie_gov: selfieGov
+                                selfie_gov: selfieGov,
+                                document_check_data: documentCheckData,
+                                datos_faltantes: datosFaltantes
                             }, 
                             screen: screenName 
                         };
